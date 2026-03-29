@@ -1,0 +1,356 @@
+package model;
+
+public enum BookCategory {
+    SCIENCE,
+    FICTION,
+    HISTORY
+}
+📘 Book.java (Only Metadata)
+package model;
+
+public class Book {
+
+    private String isbn;
+    private String title;
+    private String author;
+    private BookCategory category;
+
+    public Book(String isbn, String title,
+                String author, BookCategory category) {
+        this.isbn = isbn;
+        this.title = title;
+        this.author = author;
+        this.category = category;
+    }
+
+    public String getIsbn() { return isbn; }
+    public String getTitle() { return title; }
+    public String getAuthor() { return author; }
+    public BookCategory getCategory() { return category; }
+}
+📕 BookItem.java (Each Physical Copy)
+package model;
+
+public class BookItem {
+
+    public enum Status { AVAILABLE, ISSUED }
+
+    private String barcode;
+    private Book book;
+    private Status status;
+
+    public BookItem(String barcode, Book book) {
+        this.barcode = barcode;
+        this.book = book;
+        this.status = Status.AVAILABLE;
+    }
+
+    // Simple synchronized method for thread safety
+    public synchronized boolean checkout() {
+        if (status == Status.AVAILABLE) {
+            status = Status.ISSUED;
+            return true;
+        }
+        return false;
+    }
+
+    public synchronized void returnBook() {
+        status = Status.AVAILABLE;
+    }
+
+    public String getBarcode() { return barcode; }
+    public Book getBook() { return book; }
+    public Status getStatus() { return status; }
+}
+
+👉 Instead of locks, we used synchronized — simpler and clean.
+
+👤 User.java
+package model;
+
+import java.time.LocalDate;
+import java.util.*;
+
+public class User {
+
+    private String userId;
+    private String name;
+    private double fine = 0;
+
+    private List<BookItem> issuedBooks = new ArrayList<>();
+    private Map<String, LocalDate> borrowedDates = new HashMap<>();
+
+    public User(String userId, String name) {
+        this.userId = userId;
+        this.name = name;
+    }
+
+    public String getUserId() { return userId; }
+    public String getName() { return name; }
+
+    public List<BookItem> getIssuedBooks() { return issuedBooks; }
+    public Map<String, LocalDate> getBorrowedDates() { return borrowedDates; }
+
+    public double getFine() { return fine; }
+    public void addFine(double amount) { fine += amount; }
+}
+👩‍💼 Librarian.java
+package model;
+
+public class Librarian extends User {
+
+    public Librarian(String id, String name) {
+        super(id, name);
+    }
+}
+📦 services
+📚 BookService.java (Simple & Clear)
+package services;
+
+import model.*;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class BookService {
+
+    private Map<String, Book> books = new ConcurrentHashMap<>();
+    private Map<String, List<BookItem>> bookCopies = new ConcurrentHashMap<>();
+
+    // Create book with quantity
+    public void addBook(String isbn, String title,
+                        String author, BookCategory category,
+                        int quantity) {
+
+        Book book = new Book(isbn, title, author, category);
+        books.put(isbn, book);
+
+        List<BookItem> copies =
+                Collections.synchronizedList(new ArrayList<>());
+
+        for (int i = 1; i <= quantity; i++) {
+            copies.add(new BookItem(isbn + "_COPY_" + i, book));
+        }
+
+        bookCopies.put(isbn, copies);
+    }
+
+    public BookItem getAvailableCopy(String isbn) {
+
+        List<BookItem> copies = bookCopies.get(isbn);
+        if (copies == null) return null;
+
+        synchronized (copies) {
+            for (BookItem item : copies) {
+                if (item.getStatus() == BookItem.Status.AVAILABLE) {
+                    return item;
+                }
+            }
+        }
+        return null;
+    }
+
+    public long getAvailableCount(String isbn) {
+        List<BookItem> copies = bookCopies.get(isbn);
+        if (copies == null) return 0;
+
+        return copies.stream()
+                .filter(c -> c.getStatus() ==
+                        BookItem.Status.AVAILABLE)
+                .count();
+    }
+
+    public List<Book> getAllBooks() {
+        return new ArrayList<>(books.values());
+    }
+}
+👥 UserService.java
+package services;
+
+import model.User;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
+
+public class UserService {
+
+    private Map<String, User> users = new ConcurrentHashMap<>();
+
+    public void addUser(User user) {
+        users.put(user.getUserId(), user);
+    }
+
+    public User getUser(String userId) {
+        return users.get(userId);
+    }
+}
+🔍 Strategy Pattern
+SearchStrategy.java
+package services;
+
+import model.Book;
+import java.util.List;
+
+public interface SearchStrategy {
+    List<Book> search(List<Book> books, String keyword);
+}
+SearchByTitle.java
+package services;
+
+import model.Book;
+import java.util.List;
+import java.util.stream.Collectors;
+
+public class SearchByTitle implements SearchStrategy {
+
+    public List<Book> search(List<Book> books, String keyword) {
+        return books.stream()
+                .filter(b -> b.getTitle()
+                        .toLowerCase()
+                        .contains(keyword.toLowerCase()))
+                .collect(Collectors.toList());
+    }
+}
+SearchByAuthor.java
+package services;
+
+import model.Book;
+import java.util.List;
+import java.util.stream.Collectors;
+
+public class SearchByAuthor implements SearchStrategy {
+
+    public List<Book> search(List<Book> books, String keyword) {
+        return books.stream()
+                .filter(b -> b.getAuthor()
+                        .toLowerCase()
+                        .contains(keyword.toLowerCase()))
+                .collect(Collectors.toList());
+    }
+}
+🏛 LibraryService.java
+package services;
+
+import model.*;
+
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+
+public class LibraryService {
+
+    private static final int MAX_BOOKS = 3;
+    private static final int MAX_DAYS = 30;
+    private static final int FINE = 100;
+
+    private BookService bookService;
+    private UserService userService;
+
+    public LibraryService(BookService bookService,
+                          UserService userService) {
+        this.bookService = bookService;
+        this.userService = userService;
+    }
+
+    public void borrowBook(String isbn, String userId) {
+
+        User user = userService.getUser(userId);
+
+        if (user.getFine() > 0) {
+            System.out.println("Clear fine first.");
+            return;
+        }
+
+        if (user.getIssuedBooks().size() >= MAX_BOOKS) {
+            System.out.println("Max limit reached.");
+            return;
+        }
+
+        BookItem copy =
+                bookService.getAvailableCopy(isbn);
+
+        if (copy == null) {
+            System.out.println("No copies available.");
+            return;
+        }
+
+        if (copy.checkout()) {
+            user.getIssuedBooks().add(copy);
+            user.getBorrowedDates()
+                    .put(copy.getBarcode(), LocalDate.now());
+            System.out.println("Book borrowed.");
+        }
+    }
+
+    public void returnBook(String barcode,
+                           String userId) {
+
+        User user = userService.getUser(userId);
+        LocalDate borrowed =
+                user.getBorrowedDates().get(barcode);
+
+        if (borrowed == null) return;
+
+        long days =
+                ChronoUnit.DAYS.between(
+                        borrowed, LocalDate.now());
+
+        if (days > MAX_DAYS) {
+            user.addFine(FINE);
+            System.out.println("Fine added: ₹" + FINE);
+        }
+
+        user.getIssuedBooks()
+                .removeIf(b ->
+                        b.getBarcode().equals(barcode));
+
+        user.getBorrowedDates().remove(barcode);
+
+        System.out.println("Book returned.");
+    }
+
+    public List<Book> searchBooks(SearchStrategy strategy,
+                                  String keyword) {
+        return strategy.search(
+                bookService.getAllBooks(),
+                keyword);
+    }
+}
+🚀 Main.java
+import model.*;
+import services.*;
+
+public class Main {
+
+    public static void main(String[] args) {
+
+        BookService bookService = new BookService();
+        UserService userService = new UserService();
+        LibraryService libraryService =
+                new LibraryService(bookService, userService);
+
+        // Librarian adds book
+        bookService.addBook(
+                "ISBN1",
+                "Wings of Fire",
+                "APJ Abdul Kalam",
+                BookCategory.SCIENCE,
+                3
+        );
+
+        User user = new User("U1", "Pallavi");
+        userService.addUser(user);
+
+        // Search
+        libraryService.searchBooks(
+                new SearchByTitle(),
+                "Wings"
+        ).forEach(b ->
+                System.out.println("Found: " + b.getTitle()));
+
+        // Borrow
+        libraryService.borrowBook("ISBN1", "U1");
+
+        System.out.println("Available copies: " +
+                bookService.getAvailableCount("ISBN1"));
+    }
+}
