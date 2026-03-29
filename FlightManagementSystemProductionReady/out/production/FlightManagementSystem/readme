@@ -1,0 +1,10 @@
+Design and implement an Airline Management System that allows users to book flights, manage passengers, handle seat assignments, process payments, and track bookings and flights.
+
+Requirements
+Flight Management: The system manages flights, each with a unique flight number, aircraft, source, destination, and schedule.
+Aircraft Management: Each flight is associated with an aircraft, which has a model and a set of seats.
+Seat Management: The system manages seat assignments and availability for each flight.
+Passenger Management: Passengers can be added, updated, and associated with bookings.
+Booking Management: Users can book flights, and the system tracks bookings, assigned seats, and passengers.
+Payment Processing: The system processes payments for bookings.
+Extensibility: Easy to add new features such as loyalty programs, meal selection, or multi-leg journeys.
